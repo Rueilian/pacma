@@ -268,35 +268,47 @@ class Pacman {
     const sp=this.map.find(TILE.PACMAN_SPAWN)||{c:13,r:23};
     const {x,y}=this.map.center(sp.c,sp.r);
     this.x=x; this.y=y; this.c=sp.c; this.r=sp.r;
+    this.tc=sp.c; this.tr=sp.r;   // target tile we're heading toward
     this.dir='left'; this.next='left';
     this.speed=this.map.cfg.pacmanSpeed||2;
     this.mouth=0; this.mdir=1;
     this.dying=false; this.df=0;
-    this._lastTile=null;
   }
   setNext(d){ if(d) this.next=d; }
 
-  _near(){ const {x:cx,y:cy}=this.map.center(this.c,this.r); return Math.abs(this.x-cx)<=this.speed+1&&Math.abs(this.y-cy)<=this.speed+1; }
-  _snap(){ const {x:cx,y:cy}=this.map.center(this.c,this.r); this.x=cx; this.y=cy; }
-  _can(d){ const v=DIR_VEC[d]; const nc=(this.c+v.dx+COLS)%COLS,nr=this.r+v.dy; return !this.map.isWall(nc,nr); }
+  _canGo(c,r,d){ const v=DIR_VEC[d]; const nc=(c+v.dx+COLS)%COLS,nr=r+v.dy; return !this.map.isWall(nc,nr); }
 
   update(){
     if(this.dying){ this.df++; return; }
     this.mouth+=this.mdir*0.15;
     if(this.mouth>=Math.PI/4){this.mouth=Math.PI/4;this.mdir=-1;}
     if(this.mouth<=0){this.mouth=0;this.mdir=1;}
-    const tk=`${this.c},${this.r}`;
-    if(this._near() && tk!==this._lastTile){
-      this._snap();
-      this.c=Math.round(this.x/TS-0.5); this.r=Math.round(this.y/TS-0.5);
-      this.c=(this.c+COLS)%COLS;
-      this._lastTile=`${this.c},${this.r}`;
-      if(this.next&&this._can(this.next)) this.dir=this.next;
-      if(!this._can(this.dir)) return;
+
+    // Distance to target tile center
+    const tx=this.tc*TS+TS/2, ty=this.tr*TS+TS/2;
+    const dist=Math.abs(tx-this.x)+Math.abs(ty-this.y);
+
+    if(dist<=this.speed){
+      // Arrived — snap exactly to center
+      this.x=tx; this.y=ty;
+      this.c=this.tc; this.r=this.tr;
+      // Try queued direction
+      if(this.next && this._canGo(this.c,this.r,this.next)) this.dir=this.next;
+      // Advance to next tile if not a wall
+      if(this._canGo(this.c,this.r,this.dir)){
+        const v=DIR_VEC[this.dir];
+        this.tc=(this.c+v.dx+COLS)%COLS; this.tr=this.r+v.dy;
+      }
+      // else: tc/tr stay == c/r → stuck check below keeps us still
     }
-    const v=DIR_VEC[this.dir]; this.x+=v.dx*this.speed; this.y+=v.dy*this.speed;
-    this.c=Math.floor(this.x/TS); this.r=Math.floor(this.y/TS);
-    this.c=(this.c+COLS)%COLS;
+
+    if(this.c===this.tc&&this.r===this.tr) return; // no valid next tile, stay put
+
+    // Move toward target tile center
+    const ndx=this.tc*TS+TS/2-this.x, ndy=this.tr*TS+TS/2-this.y;
+    const ndist=Math.abs(ndx)+Math.abs(ndy);
+    if(ndist>0){ const s=Math.min(this.speed,ndist); this.x+=(ndx/ndist)*s; this.y+=(ndy/ndist)*s; }
+    this.c=Math.floor(this.x/TS); this.r=Math.floor(this.y/TS); this.c=(this.c+COLS)%COLS;
   }
   startDeath(){ this.dying=true; this.df=0; }
   deathDone(){ return this.dying&&this.df>60; }
@@ -333,25 +345,23 @@ class Ghost {
     const sp=spawns[this.idx%Math.max(spawns.length,1)]||{c:13,r:14};
     const {x,y}=this.map.center(sp.c,sp.r);
     this.x=x; this.y=y; this.c=sp.c; this.r=sp.r;
-    this.dir='left'; this.mode='scatter';
+    this.tc=sp.c; this.tr=sp.r;   // target tile
+    this.dir='up'; this.mode='scatter';
     this.speed=this.map.cfg.ghostSpeed||1.5;
     this.modeTimer=0; this.modeIdx=0;
     this.fTimer=0; this.active=false;
     this.releaseDelay=this.idx*3000; this.relTimer=0; this.eaten=false;
-    this._lastTile=null;
   }
   frighten(dur){ if(this.mode==='eaten') return; this.mode='frightened'; this.fTimer=dur; this.dir=OPPOSITE[this.dir]||'up'; }
   eat(){ this.mode='eaten'; this.eaten=true; }
   isEatable(){ return this.mode==='frightened'; }
 
-  _near(){ const {x:cx,y:cy}=this.map.center(this.c,this.r); return Math.abs(this.x-cx)<=this.speed+1&&Math.abs(this.y-cy)<=this.speed+1; }
-  _snap(){ const {x:cx,y:cy}=this.map.center(this.c,this.r); this.x=cx; this.y=cy; }
   _canDir(c,r,d){ const v=DIR_VEC[d]; const nc=(c+v.dx+COLS)%COLS,nr=r+v.dy; return !this.map.isWall(nc,nr); }
 
   _chooseDir(tc,tr){
     const opp=OPPOSITE[this.dir];
     const dirs=['up','down','left','right'].filter(d=>d!==opp&&this._canDir(this.c,this.r,d));
-    if(!dirs.length) return opp;
+    if(!dirs.length) return OPPOSITE[this.dir]||'up';
     if(this.mode==='frightened') return dirs[Math.floor(Math.random()*dirs.length)];
     const fd=this.map.bfs(this.c,this.r,tc,tr,opp);
     if(fd&&dirs.includes(fd)) return fd;
@@ -383,24 +393,38 @@ class Ghost {
       const lim=MODE_SCHED[this.modeIdx]||Infinity;
       if(this.modeTimer>=lim){ this.modeTimer=0; this.modeIdx++; this.mode=this.modeIdx%2===0?'scatter':'chase'; }
     }
-    if(this.mode==='eaten'){
-      const home=this.map.findAll(TILE.GHOST_SPAWN)[0]||{c:13,r:14};
-      if(this.c===home.c&&this.r===home.r){ this.eaten=false; this.mode='scatter'; this.modeIdx=0; this.modeTimer=0; }
-    }
+
     const spd=this.mode==='frightened'?this.speed*0.5:this.mode==='eaten'?this.speed*2:this.speed;
-    const gtk=`${this.c},${this.r}`;
-    if(this._near() && gtk!==this._lastTile){
-      this._snap();
-      this.c=Math.round(this.x/TS-0.5); this.r=Math.round(this.y/TS-0.5);
-      this.c=(this.c+COLS)%COLS;
-      this._lastTile=`${this.c},${this.r}`;
+
+    // Distance to target tile center
+    const tx=this.tc*TS+TS/2, ty=this.tr*TS+TS/2;
+    const dist=Math.abs(tx-this.x)+Math.abs(ty-this.y);
+
+    if(dist<=spd){
+      // Arrived — snap to center
+      this.x=tx; this.y=ty;
+      this.c=this.tc; this.r=this.tr;
+      // Check if returned home when eaten
+      if(this.mode==='eaten'){
+        const home=this.map.findAll(TILE.GHOST_SPAWN)[0]||{c:13,r:14};
+        if(this.c===home.c&&this.r===home.r){ this.eaten=false; this.mode='scatter'; this.modeIdx=0; this.modeTimer=0; }
+      }
+      // Choose direction and advance to next tile
       const tgt=this._target(pac);
       this.dir=this._chooseDir(tgt.c,tgt.r);
+      if(this._canDir(this.c,this.r,this.dir)){
+        const v=DIR_VEC[this.dir];
+        this.tc=(this.c+v.dx+COLS)%COLS; this.tr=this.r+v.dy;
+      }
     }
-    if(this._canDir(this.c,this.r,this.dir)){
-      const v=DIR_VEC[this.dir]; this.x+=v.dx*spd; this.y+=v.dy*spd;
-      this.c=Math.floor(this.x/TS); this.r=Math.floor(this.y/TS); this.c=(this.c+COLS)%COLS;
-    }
+
+    if(this.c===this.tc&&this.r===this.tr) return; // stuck
+
+    // Move toward target tile center
+    const ndx=this.tc*TS+TS/2-this.x, ndy=this.tr*TS+TS/2-this.y;
+    const ndist=Math.abs(ndx)+Math.abs(ndy);
+    if(ndist>0){ const s=Math.min(spd,ndist); this.x+=(ndx/ndist)*s; this.y+=(ndy/ndist)*s; }
+    this.c=Math.floor(this.x/TS); this.r=Math.floor(this.y/TS); this.c=(this.c+COLS)%COLS;
   }
 
   draw(ctx,flash){
