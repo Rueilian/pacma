@@ -266,17 +266,15 @@ class Pacman {
   constructor(map) { this.map=map; this.reset(); }
   reset() {
     const sp=this.map.find(TILE.PACMAN_SPAWN)||{c:13,r:23};
-    const {x,y}=this.map.center(sp.c,sp.r);
-    this.x=x; this.y=y; this.c=sp.c; this.r=sp.r;
-    this.tc=sp.c; this.tr=sp.r;   // target tile we're heading toward
+    this.c=sp.c; this.r=sp.r;
+    this.x=sp.c*TS+TS/2; this.y=sp.r*TS+TS/2;
     this.dir='left'; this.next='left';
     this.speed=this.map.cfg.pacmanSpeed||2;
     this.mouth=0; this.mdir=1;
     this.dying=false; this.df=0;
   }
   setNext(d){ if(d) this.next=d; }
-
-  _canGo(c,r,d){ const v=DIR_VEC[d]; const nc=(c+v.dx+COLS)%COLS,nr=r+v.dy; return !this.map.isWall(nc,nr); }
+  _can(c,r,d){ const v=DIR_VEC[d]; const nc=(c+v.dx+COLS)%COLS,nr=r+v.dy; return !this.map.isWall(nc,nr); }
 
   update(){
     if(this.dying){ this.df++; return; }
@@ -284,31 +282,24 @@ class Pacman {
     if(this.mouth>=Math.PI/4){this.mouth=Math.PI/4;this.mdir=-1;}
     if(this.mouth<=0){this.mouth=0;this.mdir=1;}
 
-    // Distance to target tile center
-    const tx=this.tc*TS+TS/2, ty=this.tr*TS+TS/2;
-    const dist=Math.abs(tx-this.x)+Math.abs(ty-this.y);
-
-    if(dist<=this.speed){
-      // Arrived — snap exactly to center
-      this.x=tx; this.y=ty;
-      this.c=this.tc; this.r=this.tr;
-      // Try queued direction
-      if(this.next && this._canGo(this.c,this.r,this.next)) this.dir=this.next;
-      // Advance to next tile if not a wall
-      if(this._canGo(this.c,this.r,this.dir)){
-        const v=DIR_VEC[this.dir];
-        this.tc=(this.c+v.dx+COLS)%COLS; this.tr=this.r+v.dy;
+    let rem=this.speed;
+    while(rem>0){
+      const cx=this.c*TS+TS/2, cy=this.r*TS+TS/2;
+      // At tile center: apply direction change & wall check
+      if(this.x===cx && this.y===cy){
+        if(this.next && this._can(this.c,this.r,this.next)) this.dir=this.next;
+        if(!this._can(this.c,this.r,this.dir)){ rem=0; break; }
       }
-      // else: tc/tr stay == c/r → stuck check below keeps us still
+      const v=DIR_VEC[this.dir];
+      const nc=(this.c+v.dx+COLS)%COLS, nr=this.r+v.dy;
+      const nx=nc*TS+TS/2, ny=nr*TS+TS/2;
+      const distToNext=Math.abs(nx-this.x)+Math.abs(ny-this.y);
+      if(distToNext<=rem){
+        this.x=nx; this.y=ny; this.c=nc; this.r=nr; rem-=distToNext;
+      } else {
+        this.x+=v.dx*rem; this.y+=v.dy*rem; rem=0;
+      }
     }
-
-    if(this.c===this.tc&&this.r===this.tr) return; // no valid next tile, stay put
-
-    // Move toward target tile center
-    const ndx=this.tc*TS+TS/2-this.x, ndy=this.tr*TS+TS/2-this.y;
-    const ndist=Math.abs(ndx)+Math.abs(ndy);
-    if(ndist>0){ const s=Math.min(this.speed,ndist); this.x+=(ndx/ndist)*s; this.y+=(ndy/ndist)*s; }
-    this.c=Math.floor(this.x/TS); this.r=Math.floor(this.y/TS); this.c=(this.c+COLS)%COLS;
   }
   startDeath(){ this.dying=true; this.df=0; }
   deathDone(){ return this.dying&&this.df>60; }
@@ -343,9 +334,8 @@ class Ghost {
   reset(){
     const spawns=this.map.findAll(TILE.GHOST_SPAWN);
     const sp=spawns[this.idx%Math.max(spawns.length,1)]||{c:13,r:14};
-    const {x,y}=this.map.center(sp.c,sp.r);
-    this.x=x; this.y=y; this.c=sp.c; this.r=sp.r;
-    this.tc=sp.c; this.tr=sp.r;   // target tile
+    this.c=sp.c; this.r=sp.r;
+    this.x=sp.c*TS+TS/2; this.y=sp.r*TS+TS/2;
     this.dir='up'; this.mode='scatter';
     this.speed=this.map.cfg.ghostSpeed||1.5;
     this.modeTimer=0; this.modeIdx=0;
@@ -396,35 +386,30 @@ class Ghost {
 
     const spd=this.mode==='frightened'?this.speed*0.5:this.mode==='eaten'?this.speed*2:this.speed;
 
-    // Distance to target tile center
-    const tx=this.tc*TS+TS/2, ty=this.tr*TS+TS/2;
-    const dist=Math.abs(tx-this.x)+Math.abs(ty-this.y);
-
-    if(dist<=spd){
-      // Arrived — snap to center
-      this.x=tx; this.y=ty;
-      this.c=this.tc; this.r=this.tr;
-      // Check if returned home when eaten
-      if(this.mode==='eaten'){
-        const home=this.map.findAll(TILE.GHOST_SPAWN)[0]||{c:13,r:14};
-        if(this.c===home.c&&this.r===home.r){ this.eaten=false; this.mode='scatter'; this.modeIdx=0; this.modeTimer=0; }
+    let rem=spd;
+    while(rem>0){
+      const cx=this.c*TS+TS/2, cy=this.r*TS+TS/2;
+      // At tile center: pick new direction
+      if(this.x===cx && this.y===cy){
+        // Check if returned home when eaten
+        if(this.mode==='eaten'){
+          const home=this.map.findAll(TILE.GHOST_SPAWN)[0]||{c:13,r:14};
+          if(this.c===home.c&&this.r===home.r){ this.eaten=false; this.mode='scatter'; this.modeIdx=0; this.modeTimer=0; }
+        }
+        const tgt=this._target(pac);
+        this.dir=this._chooseDir(tgt.c,tgt.r);
+        if(!this._canDir(this.c,this.r,this.dir)){ rem=0; break; }
       }
-      // Choose direction and advance to next tile
-      const tgt=this._target(pac);
-      this.dir=this._chooseDir(tgt.c,tgt.r);
-      if(this._canDir(this.c,this.r,this.dir)){
-        const v=DIR_VEC[this.dir];
-        this.tc=(this.c+v.dx+COLS)%COLS; this.tr=this.r+v.dy;
+      const v=DIR_VEC[this.dir];
+      const nc=(this.c+v.dx+COLS)%COLS, nr=this.r+v.dy;
+      const nx=nc*TS+TS/2, ny=nr*TS+TS/2;
+      const distToNext=Math.abs(nx-this.x)+Math.abs(ny-this.y);
+      if(distToNext<=rem){
+        this.x=nx; this.y=ny; this.c=nc; this.r=nr; rem-=distToNext;
+      } else {
+        this.x+=v.dx*rem; this.y+=v.dy*rem; rem=0;
       }
     }
-
-    if(this.c===this.tc&&this.r===this.tr) return; // stuck
-
-    // Move toward target tile center
-    const ndx=this.tc*TS+TS/2-this.x, ndy=this.tr*TS+TS/2-this.y;
-    const ndist=Math.abs(ndx)+Math.abs(ndy);
-    if(ndist>0){ const s=Math.min(spd,ndist); this.x+=(ndx/ndist)*s; this.y+=(ndy/ndist)*s; }
-    this.c=Math.floor(this.x/TS); this.r=Math.floor(this.y/TS); this.c=(this.c+COLS)%COLS;
   }
 
   draw(ctx,flash){
