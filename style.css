@@ -1,0 +1,73 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  overflow: hidden;
+  font-family: 'Press Start 2P', 'Courier New', monospace;
+  touch-action: none;
+}
+
+#game-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+#gameCanvas {
+  display: block;
+  background: #000;
+  border: 2px solid #1a1aff;
+  max-width: 100vw;
+  max-height: 80vh;
+  /* Scale canvas to fit viewport while maintaining aspect ratio */
+  width: min(560px, 100vw - 8px);
+  height: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Mobile D-pad controls */
+#mobile-controls {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+#ctrl-middle-row {
+  display: flex;
+  gap: 4px;
+}
+
+.ctrl-btn {
+  width: 56px;
+  height: 56px;
+  background: rgba(255,255,255,0.15);
+  border: 2px solid rgba(255,255,255,0.4);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ctrl-btn:active {
+  background: rgba(255,255,0,0.4);
+}
+
+@media (pointer: coarse) {
+  #mobile-controls { display: flex; }
+}
+
+@media (max-width: 580px) {
+  #mobile-controls { display: flex; }
+}

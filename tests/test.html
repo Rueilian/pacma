@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pac-Man Unit Tests</title>
+  <style>
+    body { background: #111; color: #eee; font-family: monospace; padding: 20px; }
+    h1 { color: #FFD700; }
+    .pass { color: #00ff88; }
+    .fail { color: #ff4444; }
+    .suite { margin-top: 20px; font-size: 14px; }
+    .result { margin: 4px 0; padding: 4px 8px; border-radius: 4px; }
+    .result.pass { background: rgba(0,255,136,0.1); }
+    .result.fail { background: rgba(255,68,68,0.1); }
+    #summary { margin-top: 20px; font-size: 16px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>🎮 Pac-Man Unit Tests</h1>
+  <div id="output"></div>
+  <div id="summary"></div>
+  <script type="module">
+    import { Map, TILE, TILE_SIZE, COLS, ROWS } from '../src/map.js';
+
+    const results = [];
+    const out = document.getElementById('output');
+
+    function assert(name, condition, detail = '') {
+      results.push({ name, pass: condition, detail });
+      const div = document.createElement('div');
+      div.className = `result ${condition ? 'pass' : 'fail'}`;
+      div.textContent = `${condition ? '✅' : '❌'} ${name}${detail ? ': ' + detail : ''}`;
+      out.appendChild(div);
+    }
+
+    function suite(name) {
+      const h = document.createElement('div');
+      h.className = 'suite';
+      h.innerHTML = `<strong style="color:#FFD700">▶ ${name}</strong>`;
+      out.appendChild(h);
+    }
+
+    // ── Minimal level data for tests ──
+    const testLevel = {
+      name: 'Test',
+      ghostSpeed: 1.5,
+      pacmanSpeed: 2,
+      frightenedDuration: 8000,
+      tiles: Array.from({ length: ROWS }, (_, r) =>
+        Array.from({ length: COLS }, (_, c) => {
+          if (r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1) return TILE.WALL;
+          if (r === 5 && c >= 2 && c <= 6) return TILE.DOT;
+          if (r === 5 && c === 7) return TILE.PELLET;
+          if (r === 10 && c === 5) return TILE.PACMAN_SPAWN;
+          if (r === 10 && c === 10) return TILE.GHOST_SPAWN;
+          return TILE.EMPTY;
+        })
+      ),
+    };
+
+    // ── Suite 1: Map Loading ──
+    suite('Map Loading');
+    const map = new Map();
+    map.load(testLevel);
+
+    assert('Map loads without error', map.tiles.length === ROWS);
+    assert('Map has correct columns', map.tiles[0].length === COLS);
+    assert('Dot count correct (5 dots + 1 pellet = 6)', map.dotCount === 6);
+    assert('getTile returns WALL at border', map.getTile(0, 0) === TILE.WALL);
+    assert('getTile returns DOT at (2,5)', map.getTile(2, 5) === TILE.DOT);
+    assert('getTile returns PELLET at (7,5)', map.getTile(7, 5) === TILE.PELLET);
+    assert('isWall on border col=0', map.isWall(0, 5) === true);
+    assert('isWall on empty cell = false', map.isWall(3, 3) === false);
+
+    // ── Suite 2: Dot Removal ──
+    suite('Dot Removal');
+    const removedDot = map.removeDot(2, 5);
+    assert('removeDot returns DOT tile value', removedDot === TILE.DOT);
+    assert('Dot count decremented', map.dotCount === 5);
+    assert('Tile is now EMPTY after removal', map.getTile(2, 5) === TILE.EMPTY);
+    const removedAgain = map.removeDot(2, 5);
+    assert('removeDot on empty returns null', removedAgain === null);
+    assert('Dot count unchanged after null removal', map.dotCount === 5);
+
+    const removedPellet = map.removeDot(7, 5);
+    assert('removeDot returns PELLET tile value', removedPellet === TILE.PELLET);
+    assert('Dot count decremented after pellet', map.dotCount === 4);
+
+    // ── Suite 3: Spawn Detection ──
+    suite('Spawn Detection');
+    const pacSpawn = map.findTile(TILE.PACMAN_SPAWN);
+    assert('findTile finds Pac-Man spawn', pacSpawn !== null);
+    assert('Pac-Man spawn col correct', pacSpawn?.col === 5);
+    assert('Pac-Man spawn row correct', pacSpawn?.row === 10);
+
+    const ghostSpawns = map.findAllTiles(TILE.GHOST_SPAWN);
+    assert('findAllTiles finds ghost spawn', ghostSpawns.length >= 1);
+
+    // ── Suite 4: Coordinate Conversion ──
+    suite('Coordinate Conversion');
+    const center = map.tileCenter(3, 5);
+    assert('tileCenter x = col*TS + TS/2', center.x === 3 * TILE_SIZE + TILE_SIZE / 2);
+    assert('tileCenter y = row*TS + TS/2', center.y === 5 * TILE_SIZE + TILE_SIZE / 2);
+
+    const tile = map.pixelToTile(center.x, center.y);
+    assert('pixelToTile round-trips (col)', tile.col === 3);
+    assert('pixelToTile round-trips (row)', tile.row === 5);
+
+    // ── Suite 5: Score Calculation ──
+    suite('Score Calculation');
+    const GHOST_BASE = 200;
+    let multiplier = 1;
+    const pts = [];
+    for (let i = 0; i < 4; i++) {
+      pts.push(GHOST_BASE * multiplier);
+      multiplier *= 2;
+    }
+    assert('1st ghost = 200',  pts[0] === 200);
+    assert('2nd ghost = 400',  pts[1] === 400);
+    assert('3rd ghost = 800',  pts[2] === 800);
+    assert('4th ghost = 1600', pts[3] === 1600);
+
+    // ── Suite 6: BFS Pathfinding ──
+    suite('BFS Pathfinding');
+    // Build a small open map for BFS test
+    const openLevel = {
+      name: 'BFS', ghostSpeed: 1.5, pacmanSpeed: 2, frightenedDuration: 8000,
+      tiles: Array.from({ length: ROWS }, (_, r) =>
+        Array.from({ length: COLS }, (_, c) =>
+          (r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1) ? TILE.WALL : TILE.EMPTY
+        )
+      ),
+    };
+    const bfsMap = new Map();
+    bfsMap.load(openLevel);
+    const dir1 = bfsMap.bfsNextDirection(2, 2, 5, 2);   // same row, go right
+    const dir2 = bfsMap.bfsNextDirection(2, 2, 2, 5);   // same col, go down
+    const dir3 = bfsMap.bfsNextDirection(5, 5, 5, 5);   // same tile
+    assert('BFS: same row → right', dir1 === 'right');
+    assert('BFS: same col → down',  dir2 === 'down');
+    assert('BFS: same tile → null', dir3 === null);
+
+    // ── Suite 7: Wall boundary detection ──
+    suite('Wall Boundary');
+    assert('getTile out-of-bounds row=-1 → WALL', map.getTile(5, -1) === TILE.WALL);
+    assert('getTile out-of-bounds col=-1 → WALL', map.getTile(-1, 5) === TILE.WALL);
+    assert('getTile out-of-bounds row=ROWS → WALL', map.getTile(5, ROWS) === TILE.WALL);
+
+    // ── Summary ──
+    const passed = results.filter(r => r.pass).length;
+    const total  = results.length;
+    const summary = document.getElementById('summary');
+    summary.style.color = passed === total ? '#00ff88' : '#ff4444';
+    summary.textContent = `Result: ${passed} / ${total} tests passed`;
+  </script>
+</body>
+</html>
